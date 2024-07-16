@@ -1,0 +1,30 @@
+<!DOCTYPE html>  
+<html>  
+<head>  
+    <title>Flask-SocketIO Example</title>  
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.0.1/socket.io.js"></script>  
+</head>  
+<body>  
+    <h1>Flask-SocketIO Example</h1>  
+    <button onclick="startTask()">Start Task</button>  
+    <ul id="updates"></ul>  
+  
+    <script type="text/javascript" charset="utf-8">  
+        var socket = io();  
+  
+        socket.on('connect', function() {  
+            console.log('Connected to server');  
+        });  
+  
+        socket.on('task_update', function(msg) {  
+            var li = document.createElement("li");  
+            li.appendChild(document.createTextNode(msg.data));  
+            document.getElementById("updates").appendChild(li);  
+        });  
+  
+        function startTask() {  
+            socket.emit('start_task', {data: 'Start the task'});  
+        }  
+    </script>  
+</body>  
+</html>  
