@@ -6,14 +6,7 @@ import os
 from openai import AzureOpenAI
 from langchain_openai import AzureChatOpenAI
 from langchain.callbacks.base import BaseCallbackHandler
-
-class StreamHandler(BaseCallbackHandler):
-    def on_llm_new_token(self, token: str, **kwargs):
-        print(token, end='', flush=True)  # Print each token as it arrives
-
 from dotenv import load_dotenv
-
-
 from common.prompts import DECISION_STEP_PROMPT, QUERY_TRANSLATION_PROMPT, MAIN_SYSTEM_PROMPT
 from common.azure_cosmos_db import AzureCosmosDB
 from datetime import datetime
@@ -24,15 +17,11 @@ from azure.search.documents.models import VectorizedQuery
 load_dotenv()
 
 
+
+
 aoai_endpoint = os.getenv('AOAI_ENDPOINT')
 aoai_key = os.getenv('AOAI_KEY')
 aoai_deployment = os.getenv('AOAI_DEPLOYMENT')
-
-aoai_client = AzureOpenAI(
-        azure_endpoint = os.getenv("AZURE_OPENAI_ENDPOINT"), 
-        api_key=os.getenv("AZURE_OPENAI_KEY"),  
-        api_version="2023-05-15"
-        )
 
 
 cosmos_key = os.getenv('COSMOS_MASTER_KEY')
@@ -66,12 +55,18 @@ primary_llm = AzureChatOpenAI(
             azure_endpoint=aoai_endpoint
     )
 
+aoai_client = AzureOpenAI(
+    azure_endpoint=aoai_endpoint,
+    api_key=aoai_key,
+    api_version="2023-05-15"
+)
+
 
 def generate_embeddings(text, model="text-embedding-ada-002"): # model = "deployment_name"
     return aoai_client.embeddings.create(input = [text], model=model).data[0].embedding
 
 
-class chat_interaction():  
+class ChatInteraction():  
     def __init__(self, user_input, user_id):  
         self.cosmos_db = AzureCosmosDB()
         self.user_input = user_input
@@ -85,56 +80,27 @@ class chat_interaction():
     def run(self):
         
         #Analyze the user input and decide what to do
-        #Yield: "Analyzing the question..."
         decision = yield from self.decision_step()
         
+        context = ""
         if decision == "DocStore":
-            #Search the doc store
-            #Yield: "Searching the document repository..."
-            
             context = yield from self.docstore_agent()
-
         elif decision == "SQL":
-            #Search the database
-            #Yield: "Searching the database..."
             yield {"type": "search", "text": "Searching the database..."}
-            result = "SQL"
+            context = "SQL query result would go here"
         elif decision == "BASE":
-            #Run the base LLM
-            #Yield: none
             print("Running BASE LLM call")
-            # messages = [
-            # {"role": "system", "content": MAIN_SYSTEM_PROMPT},
-            # {"role": "user", "content": self.user_input},
-            # ]
-            # result = self.inference(primary_llm, messages, "main")
-            
-            
+            context = "Base LLM response would go here"
         elif decision == "WebSearch":
-            #Run a web search
-            #Yield: none
             print("Running WebSearch Agent")
-            result = "WebSearch"
+            context = "Web search result would go here"
         else:
-            #Encountered a problem deciding what to do
-            #Yield: none
             print("Encountered a problem deciding what to do")
-        
-
-        # messages = [
-        #     {"role": "system", "content": MAIN_SYSTEM_PROMPT},
-        #     {"role": "user", "content": self.user_input},
-        #     ]
-        # result = ""
-        # for chunk in primary_llm.stream(messages):
-        #     print(chunk.content)
-        #     result += chunk.content
+            context = "Error in decision making"
 
         yield from self.final_llm_call(context)
-
         self.finalize_interaction()
-        result = ""
-        return result
+
 
     def final_llm_call(self, context):
 
@@ -168,7 +134,6 @@ class chat_interaction():
     def docstore_agent(self):
         print("Running DocStore Agent")
         yield {"type": "search", "text": "Searching the document repository..."}
-        #query translation step 
         messages = [
             {"role": "system", "content": QUERY_TRANSLATION_PROMPT},
             {"role": "user", "content": self.user_input},
@@ -176,52 +141,37 @@ class chat_interaction():
         search_query = self.inference(primary_llm, messages, "query_translation")
         print(search_query)
 
-        search_client = SearchClient(search_endpoint, search_index, AzureKeyCredential(search_key))
-        #convert user input and search query to vectors 
+        search_client = SearchClient(os.getenv('AZURE_SEARCH_ENDPOINT'), os.getenv('AZURE_SEARCH_INDEX'), AzureKeyCredential(os.getenv('AZURE_SEARCH_KEY')))
         query_vector = generate_embeddings(search_query)
         vector_query = VectorizedQuery(vector=query_vector, k_nearest_neighbors=3, fields="contentVector")
 
         results = search_client.search(
-                search_text=search_query,  
-                vector_queries= [vector_query],
-                top=3
+            search_text=search_query,  
+            vector_queries=[vector_query],
+            top=3
+        )
 
-                                )
         content = ""
-
-        result = {}
-        result["context"] = []
-        result["answer"] = ""
+        result_context = []
 
         for source in results:
-        #print("Score: ", result["@search.score"] ," Semantic Reranker Score: ", result["@search.reranker_score"] ,result["sourcepage"], " --- ", result["summary"])
-        #print(result)
-            print("Score: ", source["@search.score"] ,source["id"])
-            content_chunk = "<Content Chunk Start>\n" + source["content"] + "\n<Content Chunk End>\n" + "<source: " + source["id"] + ">\n\n\n"
+            print(f"Score: {source['@search.score']} {source['id']}")
+            content_chunk = f"<Content Chunk Start>\n{source['content']}\n<Content Chunk End>\n<source: {source['id']}>\n\n\n"
             content += content_chunk
-            result["context"].append(source["id"])
+            result_context.append(source['id'])
 
-        telemetry = {
+        self.step_telemetry.append({
             "step_name": "index_search", 
             "step_type": "retrieval",
-            "index": search_index,
+            "index": os.getenv('AZURE_SEARCH_INDEX'),
             "search_query": search_query,
             "query_type": "hybrid",
-            "results": result["context"],
+            "results": result_context,
+        })
 
-        }
-        self.step_telemetry.append(telemetry)
         print(content)
-
-        for source in result["context"]:
-            print("Source: ", source)
-        
-        # messages = [
-        #     {"role": "system", "content": MAIN_SYSTEM_PROMPT },
-        #     {"role": "user", "content": self.user_input + "\n" + content},
-        # ]
-
-        # response = self.inference(primary_llm, messages, "main")
+        for source in result_context:
+            print(f"Source: {source}")
 
         return content
 
@@ -232,7 +182,7 @@ class chat_interaction():
         # messages = [{"role": "system", "content": "You are a helpful AI assistant. always respond in json format with your thought process and answer."}]
         # messages.append([{"role": "user", "content": "What is 2+2?"}])
 
-        if json:
+        if json_mode:
             llm.bind(response_format={"type": "json_object"})
 
         raw_response = llm.invoke(messages)
@@ -276,14 +226,11 @@ class chat_interaction():
 
 @app.route('/run', methods=['GET', 'POST'])
 def run():
-    if request.method == 'POST':
-        user_message = request.json['message']
-    else:  # GET
-        user_message = request.args.get('message', '')
+    user_message = request.json['message'] if request.method == 'POST' else request.args.get('message', '')
 
     def run_interaction():
         
-        interaction = chat_interaction(user_message, "djg")
+        interaction = ChatInteraction(user_message, "djg")
         for step in interaction.run():
             if step['type'] == 'stream':
                 yield f"event: update\ndata: {json.dumps(step)}\n\n"
