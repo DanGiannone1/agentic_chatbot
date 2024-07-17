@@ -166,3 +166,42 @@ button:disabled {
 .validate { background-color: #5bc0de; color: #000; }
 .result { background-color: #343541; color: #fff; }
 
+/* Add these new styles to your existing App.css file */
+
+.step-box {
+  display: flex;
+  align-items: center;
+}
+
+.step-content {
+  flex-grow: 1;
+}
+
+.step-status {
+  margin-left: 10px;
+  width: 20px;
+  height: 20px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.loading-spinner {
+  border: 2px solid #f3f3f3;
+  border-top: 2px solid #3498db;
+  border-radius: 50%;
+  width: 16px;
+  height: 16px;
+  animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+  0% { transform: rotate(0deg); }
+  100% { transform: rotate(360deg); }
+}
+
+.checkmark {
+  color: #000000;
+  font-size: 24px;
+  font-weight: bold;
+}
